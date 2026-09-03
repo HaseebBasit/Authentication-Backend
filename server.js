@@ -26,7 +26,7 @@ dns.setServers([
 // SERVER CONFIGURATION
 // =========================
 
-const port = 2707;
+const port = process.env.PORT || 2707;
 
 const server = express();
 

@@ -1,907 +1,196 @@
+// All user related controller functions are defined here...!
+
 import UserModal from "../../modals/user-modal/user-modal.js";
+import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import nodeCache from "node-cache";
 import nodemailer from "nodemailer";
 
-
-// ======================================================
-// EMAIL TRANSPORTER
-// ======================================================
-
-const transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-        user: process.env.EMAIL,
-        pass: process.env.PASSWORD
-    }
-});
-
-
-// ======================================================
-// HELPER - GENERATE OTP
-// ======================================================
-
-const generateOTP = () => {
-    return Math.floor(100000 + Math.random() * 900000).toString();
-};
-
-
-// ======================================================
-// HELPER - SEND OTP EMAIL
-// ======================================================
-
-const sendOTPEmail = async (email, otp, purpose) => {
-
-    const subject =
-        purpose === "verification"
-            ? "Email Verification Code"
-            : "Password Reset Code";
-
-    const title =
-        purpose === "verification"
-            ? "Verify Your Email"
-            : "Reset Your Password";
-
-    await transporter.sendMail({
-        from: process.env.EMAIL,
-        to: email,
-        subject: subject,
-
-        html: `
-            <!DOCTYPE html>
-            <html>
-            <body style="
-                margin:0;
-                padding:40px 20px;
-                background:#f4f7fb;
-                font-family:Arial, sans-serif;
-            ">
-
-                <div style="
-                    max-width:500px;
-                    margin:auto;
-                    background:white;
-                    padding:40px;
-                    border-radius:15px;
-                    text-align:center;
-                ">
-
-                    <h2>${title}</h2>
-
-                    <p>
-                        Your verification code is:
-                    </p>
-
-                    <h1 style="
-                        color:#4f46e5;
-                        font-size:38px;
-                        letter-spacing:8px;
-                    ">
-                        ${otp}
-                    </h1>
-
-                    <p style="color:#666;">
-                        This code will expire in 10 minutes.
-                    </p>
-
-                    <p style="
-                        color:#999;
-                        font-size:13px;
-                    ">
-                        If you did not request this code,
-                        you can safely ignore this email.
-                    </p>
-
-                </div>
-
-            </body>
-            </html>
-        `
-    });
-};
-
-
-// ======================================================
-// SIGN UP
-// ======================================================
-
-const createUser = async (req, res) => {
-
-    try {
-
-        const {
-            userName,
-            email,
-            password,
-            role
-        } = req.body;
-
-
-        // Validation
-
-        if (
-            !userName ||
-            !email ||
-            !password ||
-            !role
-        ) {
-
-            return res.status(400).send({
-                status: false,
-                message: "All fields are required!"
-            });
-
-        }
-
-
-        // Check role
-
-        if (
-            role !== "trainer" &&
-            role !== "student"
-        ) {
-
-            return res.status(400).send({
-                status: false,
-                message: "Invalid role!"
-            });
-
-        }
-
-
-        // Check existing user
-
-        const existingUser =
-            await UserModal.findOne({ email });
-
-
-        if (existingUser) {
-
-            return res.status(400).send({
-                status: false,
-                message: "Email already exists!"
-            });
-
-        }
-
-
-        // Hash password
-
-        const hashedPassword =
-            await bcrypt.hash(password, 10);
-
-
-        // Generate verification OTP
-
-        const otp = generateOTP();
-
-        const otpExpiry =
-            new Date(Date.now() + 10 * 60 * 1000);
-
-
-        // Create user
-
-        const newUser = new UserModal({
-
-            userName,
-
-            email,
-
-            password: hashedPassword,
-
-            role,
-
-            isEmailVerified: false,
-
-            verificationCode: otp,
-
-            verificationCodeExpiry: otpExpiry
-
-        });
-
-
-        await newUser.save();
-
-
-        // Send verification email
-
-        await sendOTPEmail(
-            email,
-            otp,
-            "verification"
-        );
-
-
-        return res.status(201).send({
-
-            status: true,
-
-            message:
-                "Account created. Verification code sent to your email."
-
-        });
-
-    }
-
-    catch (error) {
-
-        console.log(
-            "Signup Error:",
-            error
-        );
-
-        return res.status(500).send({
-
-            status: false,
-
-            message:
-                "Internal server error!"
-
-        });
-
-    }
-};
-
-
-// ======================================================
-// VERIFY EMAIL
-// ======================================================
-
-const verifyEmail = async (req, res) => {
-
-    try {
-
-        const {
-            email,
-            code
-        } = req.body;
-
-
-        if (!email || !code) {
-
-            return res.status(400).send({
-
-                status: false,
-
-                message:
-                    "Email and verification code are required!"
-
-            });
-
-        }
-
-
-        const user =
-            await UserModal.findOne({ email });
-
-
-        if (!user) {
-
-            return res.status(404).send({
-
-                status: false,
-
-                message:
-                    "User not found!"
-
-            });
-
-        }
-
-
-        if (user.isEmailVerified) {
-
-            return res.status(400).send({
-
-                status: false,
-
-                message:
-                    "Email is already verified!"
-
-            });
-
-        }
-
-
-        // Check expiry
-
-        if (
-            !user.verificationCodeExpiry ||
-            user.verificationCodeExpiry < new Date()
-        ) {
-
-            return res.status(400).send({
-
-                status: false,
-
-                message:
-                    "Verification code has expired!"
-
-            });
-
-        }
-
-
-        // Check OTP
-
-        if (
-            user.verificationCode !== code
-        ) {
-
-            return res.status(400).send({
-
-                status: false,
-
-                message:
-                    "Invalid verification code!"
-
-            });
-
-        }
-
-
-        // Verify user
-
-        user.isEmailVerified = true;
-
-        user.verificationCode = null;
-
-        user.verificationCodeExpiry = null;
-
-        await user.save();
-
-
-        return res.status(200).send({
-
-            status: true,
-
-            message:
-                "Email verified successfully!"
-
-        });
-
-    }
-
-    catch (error) {
-
-        console.log(
-            "Verify Email Error:",
-            error
-        );
-
-        return res.status(500).send({
-
-            status: false,
-
-            message:
-                "Internal server error!"
-
-        });
-
-    }
-};
-
-
-// ======================================================
-// LOGIN
-// ======================================================
-
+// Log in controller...!
 const handleLogIn = async (req, res) => {
-
     try {
-
-        const {
-            email,
-            password
-        } = req.body;
-
+        const { email, password } = req?.body;
 
         if (!email || !password) {
-
             return res.status(400).send({
-
                 status: false,
-
-                message:
-                    "Email and password are required!"
-
+                message: "Validation Err"
             });
+        };
 
-        }
-
-
-        const user =
-            await UserModal.findOne({ email });
-
-
-        if (!user) {
-
+        const isUserExist = await UserModal.findOne({ email: email });
+        if (!isUserExist) {
             return res.status(401).send({
-
                 status: false,
-
-                message:
-                    "Invalid email or password!"
-
+                message: "User does not exist"
             });
+        };
 
-        }
-
-
-        // Email verification check
-
-        if (!user.isEmailVerified) {
-
-            return res.status(403).send({
-
+        const checkPassword = await bcrypt.compare(password, isUserExist.password);
+        if (!checkPassword) {
+            return res.status(404).send({
                 status: false,
-
-                message:
-                    "Please verify your email before logging in!"
-
+                message: "Password did not match"
             });
+        };
 
-        }
-
-
-        // Check password
-
-        const passwordMatch =
-            await bcrypt.compare(
-                password,
-                user.password
-            );
-
-
-        if (!passwordMatch) {
-
-            return res.status(401).send({
-
-                status: false,
-
-                message:
-                    "Invalid email or password!"
-
-            });
-
-        }
-
-
-        // Generate JWT
-
+        // Generating token:
         const token = jwt.sign(
-
             {
-                id: user._id,
-                name: user.userName,
-                email: user.email,
-                role: user.role
+                name: isUserExist.userName,
+                email: isUserExist.email
             },
-
             process.env.JWT_Secret,
-
             {
-                expiresIn: "1h"
+                expiresIn: '1h'
             }
-
         );
 
-
+        // 200
         return res.status(200).send({
-
             status: true,
-
-            message:
-                "Login successful!",
-
-            token,
-
-            user: {
-
-                id: user._id,
-
-                userName: user.userName,
-
-                email: user.email,
-
-                role: user.role
-
-            }
-
+            message: "You have logged in successfully",
+            // data: isUserExist,
+            token: token
         });
-
     }
 
     catch (error) {
-
-        console.log(
-            "Login Error:",
-            error
-        );
-
+        console.log(`Err while login user: ${error}`);
         return res.status(500).send({
-
             status: false,
-
-            message:
-                "Internal server error!"
-
+            message: "Err while login user!"
         });
-
-    }
+    };
 };
 
 
-// ======================================================
-// FORGOT PASSWORD - SEND OTP
-// ======================================================
 
-const forgotPassword = async (req, res) => {
+const handleSendEmail = async (req, res) => {
+    const { userEmail } = req?.body;
+    console.log('Email:', userEmail);
 
     try {
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-        const { email } = req.body;
+        // Provider email info...!
+        const transporter = nodemailer.createTransport({
+            service: "gmail",
+            auth: {
+                user: process.env.EMAIL,
+                pass: process.env.PASSWORD
+            }
+        });
 
+        // Receiver info...!
+        const receiverDetails = {
+            from: process.env.EMAIL,
+            to: userEmail,
+            subject: "Email Verification Process",
+            // text: 'Your OTP is 1234'
+            html: `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Your Verification Code</title>
+</head>
 
-        if (!email) {
+<body style="margin:0; padding:0; background-color:#f4f7fb; font-family:Arial, Helvetica, sans-serif; color:#1f2937;">
 
-            return res.status(400).send({
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f7fb; padding:40px 15px;">
+    <tr>
+      <td align="center">
 
-                status: false,
+        <table width="100%" cellpadding="0" cellspacing="0" border="0"
+          style="max-width:520px; background:#ffffff; border-radius:16px; overflow:hidden; box-shadow:0 4px 20px rgba(0,0,0,0.06);">
 
-                message:
-                    "Email is required!"
+          <!-- Header -->
+          <tr>
+            <td align="center" style="background:#4f46e5; padding:30px 20px;">
+              <h1 style="margin:0; color:#ffffff; font-size:26px;">
+                Verify Your Account
+              </h1>
+            </td>
+          </tr>
 
-            });
+          <!-- Content -->
+          <tr>
+            <td style="padding:40px 35px; text-align:center;">
 
-        }
+              <p style="margin:0 0 15px; font-size:16px; line-height:1.6;">
+                Hello,
+              </p>
 
+              <p style="margin:0 0 30px; font-size:16px; line-height:1.6; color:#4b5563;">
+                Use the verification code below to complete your request.
+              </p>
 
-        const user =
-            await UserModal.findOne({ email });
+              <!-- OTP -->
+              <div style="
+                display:inline-block;
+                background:#f3f4ff;
+                border:1px solid #e0e7ff;
+                border-radius:12px;
+                padding:18px 35px;
+                margin-bottom:30px;
+              ">
+                <span style="
+                  font-size:36px;
+                  font-weight:bold;
+                  letter-spacing:8px;
+                  color:#4f46e5;
+                ">
+                  ${otp}
+                </span>
+              </div>
 
+              <p style="margin:0 0 10px; font-size:14px; color:#6b7280;">
+                This code will expire shortly.
+              </p>
 
-        // Don't expose whether email exists
+              <p style="margin:0; font-size:14px; line-height:1.6; color:#9ca3af;">
+                If you didn't request this code, you can safely ignore this email.
+              </p>
 
-        if (!user) {
+            </td>
+          </tr>
 
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 30px; background:#f9fafb; text-align:center;">
+              <p style="margin:0; font-size:12px; color:#9ca3af;">
+                © ${new Date().getFullYear()} Your Company. All rights reserved.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+
+      </td>
+    </tr>
+  </table>
+
+</body>
+</html>
+`
+        };
+
+        const sendEmail = transporter.sendMail(receiverDetails);
+        if (sendEmail) {
+            console.log('Email send successfully!');
             return res.status(200).send({
-
                 status: true,
-
-                message:
-                    "If this email exists, a reset code has been sent."
-
+                message: "Email send successfully"
             });
-
-        }
-
-
-        const otp = generateOTP();
-
-        const otpExpiry =
-            new Date(Date.now() + 10 * 60 * 1000);
-
-
-        user.resetPasswordCode = otp;
-
-        user.resetPasswordCodeExpiry =
-            otpExpiry;
-
-
-        await user.save();
-
-
-        await sendOTPEmail(
-            email,
-            otp,
-            "reset"
-        );
-
-
-        return res.status(200).send({
-
-            status: true,
-
-            message:
-                "Password reset code sent to your email."
-
-        });
-
+        };
     }
 
     catch (error) {
-
-        console.log(
-            "Forgot Password Error:",
-            error
-        );
-
-        return res.status(500).send({
-
-            status: false,
-
-            message:
-                "Internal server error!"
-
-        });
-
-    }
+        console.log('Err while sending email:', error);
+    };
 };
 
 
-// ======================================================
-// VERIFY RESET CODE
-// ======================================================
-
-const verifyResetCode = async (req, res) => {
-
-    try {
-
-        const {
-            email,
-            code
-        } = req.body;
-
-
-        if (!email || !code) {
-
-            return res.status(400).send({
-
-                status: false,
-
-                message:
-                    "Email and code are required!"
-
-            });
-
-        }
-
-
-        const user =
-            await UserModal.findOne({ email });
-
-
-        if (!user) {
-
-            return res.status(400).send({
-
-                status: false,
-
-                message:
-                    "Invalid reset code!"
-
-            });
-
-        }
-
-
-        if (
-            !user.resetPasswordCodeExpiry ||
-            user.resetPasswordCodeExpiry < new Date()
-        ) {
-
-            return res.status(400).send({
-
-                status: false,
-
-                message:
-                    "Reset code has expired!"
-
-            });
-
-        }
-
-
-        if (
-            user.resetPasswordCode !== code
-        ) {
-
-            return res.status(400).send({
-
-                status: false,
-
-                message:
-                    "Invalid reset code!"
-
-            });
-
-        }
-
-
-        return res.status(200).send({
-
-            status: true,
-
-            message:
-                "Reset code verified successfully!"
-
-        });
-
-    }
-
-    catch (error) {
-
-        console.log(
-            "Verify Reset Code Error:",
-            error
-        );
-
-        return res.status(500).send({
-
-            status: false,
-
-            message:
-                "Internal server error!"
-
-        });
-
-    }
-};
-
-
-// ======================================================
-// RESET PASSWORD
-// ======================================================
-
-const resetPassword = async (req, res) => {
-
-    try {
-
-        const {
-            email,
-            code,
-            newPassword
-        } = req.body;
-
-
-        if (
-            !email ||
-            !code ||
-            !newPassword
-        ) {
-
-            return res.status(400).send({
-
-                status: false,
-
-                message:
-                    "Email, code and new password are required!"
-
-            });
-
-        }
-
-
-        if (newPassword.length < 6) {
-
-            return res.status(400).send({
-
-                status: false,
-
-                message:
-                    "Password must be at least 6 characters!"
-
-            });
-
-        }
-
-
-        const user =
-            await UserModal.findOne({ email });
-
-
-        if (!user) {
-
-            return res.status(400).send({
-
-                status: false,
-
-                message:
-                    "Invalid reset request!"
-
-            });
-
-        }
-
-
-        // Check expiry
-
-        if (
-            !user.resetPasswordCodeExpiry ||
-            user.resetPasswordCodeExpiry < new Date()
-        ) {
-
-            return res.status(400).send({
-
-                status: false,
-
-                message:
-                    "Reset code has expired!"
-
-            });
-
-        }
-
-
-        // Check OTP
-
-        if (
-            user.resetPasswordCode !== code
-        ) {
-
-            return res.status(400).send({
-
-                status: false,
-
-                message:
-                    "Invalid reset code!"
-
-            });
-
-        }
-
-
-        // Hash new password
-
-        user.password =
-            await bcrypt.hash(
-                newPassword,
-                10
-            );
-
-
-        // Clear reset code
-
-        user.resetPasswordCode = null;
-
-        user.resetPasswordCodeExpiry = null;
-
-
-        await user.save();
-
-
-        return res.status(200).send({
-
-            status: true,
-
-            message:
-                "Password reset successfully!"
-
-        });
-
-    }
-
-    catch (error) {
-
-        console.log(
-            "Reset Password Error:",
-            error
-        );
-
-        return res.status(500).send({
-
-            status: false,
-
-            message:
-                "Internal server error!"
-
-        });
-
-    }
-};
-
-
-// ======================================================
-// EXPORT
-// ======================================================
-
-export {
-    createUser,
-    verifyEmail,
-    handleLogIn,
-    forgotPassword,
-    verifyResetCode,
-    resetPassword
-};
-
+export {handleLogIn,handleSendEmail};

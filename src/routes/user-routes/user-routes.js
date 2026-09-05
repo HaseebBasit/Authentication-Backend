@@ -1,71 +1,16 @@
+// All user related routes are defined here...!
+
 import express from "express";
-
-import {
-    createUser,
-    verifyEmail,
-    handleLogIn,
-    forgotPassword,
-    verifyResetCode,
-    resetPassword
-} from "../../controllers/user-controller/user-controller.js";
-
+import { handleLogIn,  handleSendEmail} from "../../controllers/user-controller/user-controller.js";
+import { checkAuthenticated } from "../../middleware/custom-middleware.js";
 
 const router = express.Router();
 
 
-// =========================
-// SIGN UP
-// =========================
 
-router
-    .route("/user/save")
-    .post(createUser);
+router.route('/login').post(handleLogIn);
 
-
-// =========================
-// VERIFY EMAIL
-// =========================
-
-router
-    .route("/verify/email")
-    .post(verifyEmail);
-
-
-// =========================
-// LOGIN
-// =========================
-
-router
-    .route("/login")
-    .post(handleLogIn);
-
-
-// =========================
-// FORGOT PASSWORD
-// =========================
-
-router
-    .route("/forgot-password")
-    .post(forgotPassword);
-
-
-// =========================
-// VERIFY RESET CODE
-// =========================
-
-router
-    .route("/verify-reset-code")
-    .post(verifyResetCode);
-
-
-// =========================
-// RESET PASSWORD
-// =========================
-
-router
-    .route("/reset-password")
-    .post(resetPassword);
+router.route('/send/mail').post(handleSendEmail);
 
 
 export default router;
-

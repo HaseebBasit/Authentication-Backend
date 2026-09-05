@@ -16,7 +16,7 @@ config({ path: "./.env" });
 dns.setDefaultResultOrder("ipv4first"); // For resolving hostnames to IPv4 addresses first...!
 dns.setServers(["1.1.1.1", "8.8.8.8"]); // For setting custom DNS servers...!
 
-const port = process.env.PORT;
+const port = process.env.PORT || 2707;
 const server = express();
 const limit = rateLimit({
     windowMs: 1000 * 60 * 15,

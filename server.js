@@ -30,6 +30,9 @@ server.use(cors());
 server.use(morgan('dev'));
 server.use(express.json());
 server.use(limit);
+server.get("/", (req, res) => {
+  res.send("Authentication Backend is running successfully!");
+});
 server.use(userRoutes);
 
 server.listen(port, () => {

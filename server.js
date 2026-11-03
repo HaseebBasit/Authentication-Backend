@@ -45,6 +45,16 @@ server.use(morgan("dev"));
 server.use(express.json());
 server.use(limit);
 
+// Normalizer: If any rewrite/proxy passed /server.js, restore the original route
+server.use((req, res, next) => {
+  if (req.url === "/server.js" && req.headers["x-matched-path"]) {
+    req.url = req.headers["x-matched-path"];
+  } else if (req.url.startsWith("/server.js/")) {
+    req.url = req.url.replace(/^\/server\.js/, "") || "/";
+  }
+  next();
+});
+
 // Health check endpoint (does not require DB connection)
 server.get("/", (req, res) => {
   res.json({

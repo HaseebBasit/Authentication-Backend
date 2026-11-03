@@ -3,139 +3,96 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
 
+// Helper for JWT Secret
+const getJwtSecret = () => process.env.JWT_SECRET || process.env.JWT_Secret || "default_jwt_secret_key";
+
 // ===================== SIGNUP =====================
 const handleSignUp = async (req, res) => {
   try {
-    const { userName, email, password, role } = req.body;
+    const { userName, email, password, role = "student" } = req.body;
 
-    if (!userName || !email || !password || !role) {
+    if (!userName || !email || !password) {
       return res.status(400).json({
         status: false,
-        message: "All fields are required (userName, email, password, role)",
+        message: "All fields are required (userName, email, password)",
       });
     }
 
+    const normalizedEmail = email.trim().toLowerCase();
+
     // Check if user already exists
-    const existingUser = await UserModal.findOne({ email });
+    const existingUser = await UserModal.findOne({ email: normalizedEmail });
     if (existingUser) {
       return res.status(400).json({
         status: false,
-        message: "Email already registered",
+        message: "Email already registered. Please login.",
       });
     }
 
-    // Generate 6-digit OTP
+    // Hash password with bcrypt
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+    // Optional 6-digit OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
 
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 12);
-
-    // Create user (not verified yet)
+    // Create user (verified by default so login works right away)
     const newUser = await UserModal.create({
-      userName,
-      email,
+      userName: userName.trim(),
+      email: normalizedEmail,
       password: hashedPassword,
-      role,
-      isEmailVerified: false,
+      role: role.toLowerCase() === "trainer" ? "trainer" : "student",
+      isEmailVerified: true,
       verificationCode: otp,
       verificationCodeExpiry: otpExpiry,
     });
 
-    // Send OTP email
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.EMAIL,
-        pass: process.env.PASSWORD,
-      },
-    });
+    // Optionally attempt sending email notification in background (non-blocking)
+    if (process.env.EMAIL && process.env.PASSWORD) {
+      try {
+        const transporter = nodemailer.createTransport({
+          service: "gmail",
+          auth: {
+            user: process.env.EMAIL,
+            pass: process.env.PASSWORD,
+          },
+        });
 
-    await transporter.sendMail({
-      from: process.env.EMAIL,
-      to: email,
-      subject: "Verify your email - OTP",
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 500px; margin: auto;">
-          <h2>Email Verification</h2>
-          <p>Hello <b>${userName}</b>,</p>
-          <p>Your verification code is:</p>
-          <h1 style="letter-spacing: 8px; color: #4f46e5;">${otp}</h1>
-          <p>This code will expire in 10 minutes.</p>
-        </div>
-      `,
-    });
+        transporter.sendMail({
+          from: process.env.EMAIL,
+          to: normalizedEmail,
+          subject: "Welcome to Our Platform!",
+          html: `
+            <div style="font-family: Arial, sans-serif; max-width: 500px; margin: auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
+              <h2 style="color: #4f46e5;">Welcome, ${userName}!</h2>
+              <p>Your account has been successfully created.</p>
+              <p>You can now log in using your email and password.</p>
+            </div>
+          `,
+        }).catch((err) => {
+          console.log("Optional email send error:", err.message);
+        });
+      } catch (mailErr) {
+        console.log("Transporter setup error:", mailErr.message);
+      }
+    }
 
     return res.status(201).json({
       status: true,
-      message: "Signup successful! Please check your email for the OTP.",
+      message: "Signup successful! You can now log in.",
+      user: {
+        id: newUser._id,
+        userName: newUser.userName,
+        email: newUser.email,
+        role: newUser.role,
+      },
     });
   } catch (error) {
-    console.log("Signup Error:", error);
+    console.error("Signup Error:", error);
     return res.status(500).json({
       status: false,
-      message: "Server error during signup",
-    });
-  }
-};
-
-// ===================== VERIFY OTP =====================
-const handleVerifyOTP = async (req, res) => {
-  try {
-    const { email, otp } = req.body;
-
-    if (!email || !otp) {
-      return res.status(400).json({
-        status: false,
-        message: "Email and OTP are required",
-      });
-    }
-
-    const user = await UserModal.findOne({ email });
-
-    if (!user) {
-      return res.status(404).json({
-        status: false,
-        message: "User not found",
-      });
-    }
-
-    if (user.isEmailVerified) {
-      return res.status(400).json({
-        status: false,
-        message: "Email is already verified",
-      });
-    }
-
-    if (user.verificationCode !== otp) {
-      return res.status(400).json({
-        status: false,
-        message: "Invalid OTP",
-      });
-    }
-
-    if (user.verificationCodeExpiry < new Date()) {
-      return res.status(400).json({
-        status: false,
-        message: "OTP has expired",
-      });
-    }
-
-    // Mark as verified
-    user.isEmailVerified = true;
-    user.verificationCode = null;
-    user.verificationCodeExpiry = null;
-    await user.save();
-
-    return res.status(200).json({
-      status: true,
-      message: "Email verified successfully! You can now login.",
-    });
-  } catch (error) {
-    console.log("Verify OTP Error:", error);
-    return res.status(500).json({
-      status: false,
-      message: "Server error while verifying OTP",
+      message: error.message || "Server error during signup",
     });
   }
 };
@@ -152,40 +109,34 @@ const handleLogIn = async (req, res) => {
       });
     }
 
-    const user = await UserModal.findOne({ email });
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await UserModal.findOne({ email: normalizedEmail });
 
     if (!user) {
       return res.status(401).json({
         status: false,
-        message: "User does not exist",
+        message: "Invalid email or password",
       });
     }
 
-    // Check if email is verified
-    if (!user.isEmailVerified) {
-      return res.status(403).json({
-        status: false,
-        message: "Please verify your email first",
-      });
-    }
-
+    // Verify hashed password
     const isPasswordCorrect = await bcrypt.compare(password, user.password);
     if (!isPasswordCorrect) {
       return res.status(401).json({
         status: false,
-        message: "Incorrect password",
+        message: "Invalid email or password",
       });
     }
 
-    // Generate token
+    // Generate JWT token
     const token = jwt.sign(
       {
         id: user._id,
-        name: user.userName,
+        userName: user.userName,
         email: user.email,
         role: user.role,
       },
-      process.env.JWT_Secret,
+      getJwtSecret(),
       { expiresIn: "7d" }
     );
 
@@ -201,10 +152,64 @@ const handleLogIn = async (req, res) => {
       },
     });
   } catch (error) {
-    console.log("Login Error:", error);
+    console.error("Login Error:", error);
     return res.status(500).json({
       status: false,
-      message: "Server error during login",
+      message: error.message || "Server error during login",
+    });
+  }
+};
+
+// ===================== VERIFY OTP (Optional) =====================
+const handleVerifyOTP = async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+
+    if (!email || !otp) {
+      return res.status(400).json({
+        status: false,
+        message: "Email and OTP are required",
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await UserModal.findOne({ email: normalizedEmail });
+
+    if (!user) {
+      return res.status(404).json({
+        status: false,
+        message: "User not found",
+      });
+    }
+
+    if (user.verificationCode !== otp) {
+      return res.status(400).json({
+        status: false,
+        message: "Invalid OTP",
+      });
+    }
+
+    if (user.verificationCodeExpiry && user.verificationCodeExpiry < new Date()) {
+      return res.status(400).json({
+        status: false,
+        message: "OTP has expired",
+      });
+    }
+
+    user.isEmailVerified = true;
+    user.verificationCode = null;
+    user.verificationCodeExpiry = null;
+    await user.save();
+
+    return res.status(200).json({
+      status: true,
+      message: "Email verified successfully! You can now login.",
+    });
+  } catch (error) {
+    console.error("Verify OTP Error:", error);
+    return res.status(500).json({
+      status: false,
+      message: "Server error while verifying OTP",
     });
   }
 };
@@ -221,7 +226,8 @@ const handleSendEmail = async (req, res) => {
       });
     }
 
-    const user = await UserModal.findOne({ email });
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await UserModal.findOne({ email: normalizedEmail });
 
     if (!user) {
       return res.status(404).json({
@@ -230,14 +236,6 @@ const handleSendEmail = async (req, res) => {
       });
     }
 
-    if (user.isEmailVerified) {
-      return res.status(400).json({
-        status: false,
-        message: "Email is already verified",
-      });
-    }
-
-    // Generate new OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
 
@@ -245,32 +243,33 @@ const handleSendEmail = async (req, res) => {
     user.verificationCodeExpiry = otpExpiry;
     await user.save();
 
-    // Send email
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.EMAIL,
-        pass: process.env.PASSWORD,
-      },
-    });
+    if (process.env.EMAIL && process.env.PASSWORD) {
+      const transporter = nodemailer.createTransport({
+        service: "gmail",
+        auth: {
+          user: process.env.EMAIL,
+          pass: process.env.PASSWORD,
+        },
+      });
 
-    await transporter.sendMail({
-      from: process.env.EMAIL,
-      to: email,
-      subject: "Resend OTP - Email Verification",
-      html: `
-        <h2>Your new verification code is:</h2>
-        <h1 style="letter-spacing: 8px;">${otp}</h1>
-        <p>This code will expire in 10 minutes.</p>
-      `,
-    });
+      await transporter.sendMail({
+        from: process.env.EMAIL,
+        to: normalizedEmail,
+        subject: "Your OTP Code",
+        html: `
+          <h2>Your verification code is:</h2>
+          <h1 style="letter-spacing: 8px;">${otp}</h1>
+          <p>This code will expire in 10 minutes.</p>
+        `,
+      });
+    }
 
     return res.status(200).json({
       status: true,
-      message: "New OTP sent successfully",
+      message: "OTP sent successfully",
     });
   } catch (error) {
-    console.log("Resend OTP Error:", error);
+    console.error("Resend OTP Error:", error);
     return res.status(500).json({
       status: false,
       message: "Error while sending OTP",
@@ -278,4 +277,17 @@ const handleSendEmail = async (req, res) => {
   }
 };
 
-export { handleSignUp, handleVerifyOTP, handleLogIn, handleSendEmail };
+// ===================== GET CURRENT USER (Optional / Protected) =====================
+const handleGetMe = async (req, res) => {
+  try {
+    const user = await UserModal.findById(req.user?.id).select("-password");
+    if (!user) {
+      return res.status(404).json({ status: false, message: "User not found" });
+    }
+    return res.status(200).json({ status: true, user });
+  } catch (error) {
+    return res.status(500).json({ status: false, message: error.message });
+  }
+};
+
+export { handleSignUp, handleVerifyOTP, handleLogIn, handleSendEmail, handleGetMe };

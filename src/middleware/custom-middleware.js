@@ -20,7 +20,8 @@ const checkAuthenticated = (req, res, next) => {
       });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const secret = process.env.JWT_SECRET || process.env.JWT_Secret;
+    const decoded = jwt.verify(token, secret);
 
     req.user = decoded; // optional but useful
     next();

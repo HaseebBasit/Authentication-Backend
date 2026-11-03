@@ -30,7 +30,7 @@ const userSchema = new mongoose.Schema(
         // Email verification
         isEmailVerified: {
             type: Boolean,
-            default: false
+            default: true
         },
 
         verificationCode: {
@@ -63,4 +63,3 @@ const userSchema = new mongoose.Schema(
 const UserModal = mongoose.model("users", userSchema);
 
 export default UserModal;
-

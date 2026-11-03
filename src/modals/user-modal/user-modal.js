@@ -23,8 +23,7 @@ const userSchema = new mongoose.Schema(
 
         role: {
             type: String,
-            required: true,
-            enum: ["trainer", "student"]
+            default: "user"
         },
 
         // Email verification

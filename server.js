@@ -23,7 +23,7 @@ const server = express();
 
 const limit = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 500, // Reasonable limit for dev/testing
+  max: 500,
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -45,12 +45,30 @@ server.use(morgan("dev"));
 server.use(express.json());
 server.use(limit);
 
+// Health check endpoint (does not require DB connection)
 server.get("/", (req, res) => {
   res.json({
     status: true,
     message: "Authentication Backend is running successfully!",
     timestamp: new Date().toISOString(),
   });
+});
+
+// Middleware to guarantee MongoDB is connected before running any database queries
+server.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (error) {
+    console.error("Database connection middleware error:", error.message);
+    return res.status(500).json({
+      status: false,
+      message:
+        "Database connection failed: " +
+        error.message +
+        ". Make sure MongoDB Atlas Network Access has 0.0.0.0/0 whitelisted and DB_URL is configured.",
+    });
+  }
 });
 
 server.use(userRoutes);
@@ -63,7 +81,14 @@ server.use((req, res) => {
   });
 });
 
-server.listen(port, () => {
-  console.log(`Backend server is running on http://localhost:${port}`);
-  connectDB();
-});
+// Only listen when running locally / directly (Vercel serverless imports the app)
+if (process.env.NODE_ENV !== "test" && !process.env.VERCEL) {
+  server.listen(port, () => {
+    console.log(`Backend server is running on http://localhost:${port}`);
+    connectDB().catch((err) =>
+      console.error("Initial DB connection warning:", err.message)
+    );
+  });
+}
+
+export default server;
